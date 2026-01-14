@@ -1,0 +1,13 @@
+name: simpleidn
+version: 0.1.0
+
+authors:
+  - Chao Yang <cyang05@outlook.com>
+
+crystal: '>= 1.18.2'
+
+dependencies:
+  icu:
+    github: olbat/icu.cr
+
+license: MIT
