@@ -74,6 +74,53 @@ describe SimpleIDN do
     end
   end
 
+  describe "to_ascii_2008" do
+    it "should convert basic ASCII domains unchanged" do
+      SimpleIDN.to_ascii_2008("example.com").should eq("example.com")
+    end
+
+    it "should convert IDN domains to punycode" do
+      SimpleIDN.to_ascii_2008("møllerriis.com").should eq("xn--mllerriis-l8a.com")
+    end
+
+    it "should handle Japanese domains" do
+      SimpleIDN.to_ascii_2008("日本語.jp").should eq("xn--wgv71a119e.jp")
+    end
+
+    it "should handle Chinese domains" do
+      SimpleIDN.to_ascii_2008("中文.com").should eq("xn--fiq228c.com")
+    end
+
+    it "should return nil for nil input" do
+      SimpleIDN.to_ascii_2008(nil).should be_nil
+    end
+
+    it "should handle dot-only input" do
+      # Strict IDNA2008 considers "." invalid (empty labels)
+      SimpleIDN.to_ascii_2008(".").should be_nil
+    end
+
+    it "should handle empty string" do
+      # Strict IDNA2008 considers "" invalid
+      SimpleIDN.to_ascii_2008("").should be_nil
+    end
+
+    it "should return nil for domains with * (invalid in IDNA2008)" do
+      # IDNA2008 does not allow * characters
+      SimpleIDN.to_ascii_2008("*.hello.com").should be_nil
+    end
+
+    it "should return nil for domains with leading _ (invalid in IDNA2008)" do
+      # IDNA2008 with UseStd3Rules does not allow _ characters
+      SimpleIDN.to_ascii_2008("_something.example.org").should be_nil
+    end
+
+    it "should return nil for invalid domains with disallowed characters" do
+      # Using a character that is disallowed in IDNA2008
+      SimpleIDN.to_ascii_2008("\u200D").should be_nil
+    end
+  end
+
   describe "uts #46" do
     it "should pass all test cases" do
       File.each_line(File.join(__DIR__, "IdnaTestV2.txt")) do |line|
