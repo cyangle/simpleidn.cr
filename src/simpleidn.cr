@@ -304,27 +304,27 @@ module SimpleIDN
 
     # If we can't open UTS46, fallback to manual implementation
     if ustatus != LibICU::UErrorCode::UZeroError
-       return to_ascii(domain)
+      return to_ascii(domain)
     end
 
-      begin
-        src = domain.to_uchars
-        # Buffer size: Punycode can expand input by roughly 2x, plus ACE prefix ("xn--") overhead.
-        # A 4x multiplier is safe for worst-case expansion. Minimum 256 for small inputs.
-        dst = ICU::UChars.new(Math.max(src.size * 4, 256))
-        info = LibICU::UidnaInfo.new
-        info.size = sizeof(LibICU::UidnaInfo).to_i16
+    begin
+      src = domain.to_uchars
+      # Buffer size: Punycode can expand input by roughly 2x, plus ACE prefix ("xn--") overhead.
+      # A 4x multiplier is safe for worst-case expansion. Minimum 256 for small inputs.
+      dst = ICU::UChars.new(Math.max(src.size * 4, 256))
+      info = LibICU::UidnaInfo.new
+      info.size = sizeof(LibICU::UidnaInfo).to_i16
 
-        ustatus = LibICU::UErrorCode::UZeroError
-        # Explicitly call to_unsafe to ensure we pass pointers
-        size = LibICU.uidna_name_to_ascii(uidna, src.to_unsafe, src.size, dst.to_unsafe, dst.size, pointerof(info), pointerof(ustatus))
+      ustatus = LibICU::UErrorCode::UZeroError
+      # Explicitly call to_unsafe to ensure we pass pointers
+      size = LibICU.uidna_name_to_ascii(uidna, src.to_unsafe, src.size, dst.to_unsafe, dst.size, pointerof(info), pointerof(ustatus))
 
       # If there are errors, return nil (invalid)
       if info.errors > 0 || ustatus != LibICU::UErrorCode::UZeroError
         return nil
       end
 
-        dst.to_s(size)
+      dst.to_s(size)
     rescue
       nil
     ensure
