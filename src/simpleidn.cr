@@ -1,38 +1,5 @@
-require "icu"
 require "./simpleidn/version"
 require "./simpleidn/uts46mapping"
-
-# Monkey-patch String#to_uchars to handle surrogate pairs correctly via Crystal's built-in to_utf16
-class String
-  def to_uchars
-    utf16 = self.to_utf16
-    ICU::UChars.new(utf16.to_unsafe, utf16.size)
-  end
-end
-
-# Monkey-patch ICU::UChars#to_s to handle UTF-16 decoding correctly using Crystal's built-in String.from_utf16
-struct ICU::UChars
-  def to_s(size : Int? = nil)
-    s = size || @slice.size
-    String.from_utf16(@slice[0, s])
-  end
-end
-
-# Monkey-patch ICU::Normalizer#normalize to pass correct UTF-16 length to ICU
-class ICU::Normalizer
-  def normalize(text : String) : String
-    src = text.to_uchars
-    # Allocate destination buffer. src.size * 5 is usually sufficient.
-    dest = ICU::UChars.new(src.size * 5)
-
-    ustatus = LibICU::UErrorCode::UZeroError
-    # Use src.size (UTF-16 length) instead of text.size (codepoint count)
-    size = LibICU.unorm2_normalize(@unorm, src, src.size, dest, dest.size, pointerof(ustatus))
-    ICU.check_error!(ustatus)
-
-    dest.to_s(size)
-  end
-end
 
 module SimpleIDN
   class ConversionError < Exception; end
@@ -237,7 +204,9 @@ module SimpleIDN
     built_str = String.build do |io|
       mapped.each { |cp| io << cp.chr }
     end
-    ICU::Normalizer::NFC.new.normalize(built_str)
+    # ICU::Normalizer::NFC.new.normalize(built_str)
+    # TODO: Add NFC normalization when a suitable MIT-licensed library is available
+    built_str
   end
 
   def to_ascii(domain : String?, transitional : Bool = false)
@@ -289,46 +258,5 @@ module SimpleIDN
     end
 
     out.join(DOT)
-  end
-
-  # Use ICU's robust IDNA2008 implementation
-  def to_ascii_2008(domain : String?, options : Int32? = nil) : String?
-    return nil if domain.nil?
-
-    # Default options: UseStd3Rules | CheckBidi | CheckContextj | CheckContexto | NontransitionalToASCII
-    # 2 | 4 | 8 | 16 | 64 = 94
-    opts = options || (2 | 4 | 8 | 16 | 64)
-
-    ustatus = LibICU::UErrorCode::UZeroError
-    uidna = LibICU.uidna_open_uts46(opts.to_u32, pointerof(ustatus))
-
-    # If we can't open UTS46, fallback to manual implementation
-    if ustatus != LibICU::UErrorCode::UZeroError
-      return to_ascii(domain)
-    end
-
-    begin
-      src = domain.to_uchars
-      # Buffer size: Punycode can expand input by roughly 2x, plus ACE prefix ("xn--") overhead.
-      # A 4x multiplier is safe for worst-case expansion. Minimum 256 for small inputs.
-      dst = ICU::UChars.new(Math.max(src.size * 4, 256))
-      info = LibICU::UidnaInfo.new
-      info.size = sizeof(LibICU::UidnaInfo).to_i16
-
-      ustatus = LibICU::UErrorCode::UZeroError
-      # Explicitly call to_unsafe to ensure we pass pointers
-      size = LibICU.uidna_name_to_ascii(uidna, src.to_unsafe, src.size, dst.to_unsafe, dst.size, pointerof(info), pointerof(ustatus))
-
-      # If there are errors, return nil (invalid)
-      if info.errors > 0 || ustatus != LibICU::UErrorCode::UZeroError
-        return nil
-      end
-
-      dst.to_s(size)
-    rescue
-      nil
-    ensure
-      LibICU.uidna_close(uidna) if uidna
-    end
   end
 end

@@ -16,10 +16,6 @@ It provides easy conversion from punycode ACE strings to unicode strings and vic
 
 2. Run `shards install`
 
-**Note:** This shard requires `libicu` to be installed on your system.
-- Ubuntu/Debian: `sudo apt-get install libicu-dev`
-- macOS: `brew install icu4c`
-
 ## Usage
 
 ```crystal
@@ -52,8 +48,6 @@ To format the code:
 ```bash
 crystal tool format
 ```
-
-This project uses the `icu` shard for normalization and handling of special characters.
 
 ## Contributing
 

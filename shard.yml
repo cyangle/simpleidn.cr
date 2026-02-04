@@ -6,8 +6,4 @@ authors:
 
 crystal: '>= 1.18.2'
 
-dependencies:
-  icu:
-    github: olbat/icu.cr
-
 license: MIT
