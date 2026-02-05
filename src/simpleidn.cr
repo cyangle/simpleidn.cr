@@ -37,10 +37,10 @@ module SimpleIDN
     end
   end
 
-  private def process_domain(domain : String, transitional : Bool)
+  private def process_domain(domain : String, transitional : Bool, &)
     # Split by dots, process each label, rejoin
     labels = domain.split('.')
-    
+
     # Options: Use STD3 rules, Check BiDi, Check ContextJ, Check ContextO
     options = LibICU::UIDNA_USE_STD3_RULES |
               LibICU::UIDNA_CHECK_BIDI |

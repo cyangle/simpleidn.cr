@@ -30,7 +30,7 @@ describe SimpleIDN do
       # "α͵S" -> punycode "xn--S-jib3p" (S is not Greek)
       SimpleIDN.to_ascii("α\u0375S").should be_nil
     end
-    
+
     it "rejects Greek KERAIA not followed by anything" do
       # "α͵" -> punycode "xn--wva3j"
       SimpleIDN.to_ascii("α\u0375").should be_nil

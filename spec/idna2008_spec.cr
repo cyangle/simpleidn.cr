@@ -26,7 +26,6 @@ def unescape_idna(s : String) : String
 end
 
 describe "IDNA2008 Conformance" do
-
   describe "Basic ASCII domains" do
     it "preserves simple ASCII domains" do
       SimpleIDN.to_ascii("example.com").should eq("example.com")
@@ -43,7 +42,7 @@ describe "IDNA2008 Conformance" do
   describe "German ß (Eszett) handling - IDNA2008 vs IDNA2003" do
     # IDNA2008 nontransitional: ß is preserved as xn--fa-hia
     # IDNA2003/transitional: ß maps to ss -> fass
-    
+
     it "converts faß.de to xn--fa-hia.de (nontransitional)" do
       SimpleIDN.to_ascii("faß.de").should eq("xn--fa-hia.de")
     end
@@ -74,7 +73,7 @@ describe "IDNA2008 Conformance" do
   describe "Greek final sigma handling - IDNA2008" do
     # Greek final sigma (ς) vs regular sigma (σ) distinction
     # IDNA2008 preserves the distinction
-    
+
     it "handles βόλος with final sigma" do
       # βόλος (with final sigma ς) -> xn--nxasmm1c
       SimpleIDN.to_ascii("βόλος").should eq("xn--nxasmm1c")
@@ -474,8 +473,8 @@ describe "IDNA2008 Conformance" do
 
     it "preserves final sigma ς in nontransitional mode" do
       # In nontransitional mode, ς is preserved distinct from σ
-      result_final = SimpleIDN.to_ascii("βόλος")  # with final sigma
-      result_regular = SimpleIDN.to_ascii("βόλοσ")  # with regular sigma
+      result_final = SimpleIDN.to_ascii("βόλος")   # with final sigma
+      result_regular = SimpleIDN.to_ascii("βόλοσ") # with regular sigma
       result_final.should_not eq(result_regular)
     end
   end
