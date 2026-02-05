@@ -41,10 +41,11 @@ module SimpleIDN
     # Split by dots, process each label, rejoin
     labels = domain.split('.')
     
-    # Options: Use STD3 rules, Check BiDi, Check ContextJ
+    # Options: Use STD3 rules, Check BiDi, Check ContextJ, Check ContextO
     options = LibICU::UIDNA_USE_STD3_RULES |
               LibICU::UIDNA_CHECK_BIDI |
-              LibICU::UIDNA_CHECK_CONTEXTJ
+              LibICU::UIDNA_CHECK_CONTEXTJ |
+              LibICU::UIDNA_CHECK_CONTEXTO
 
     # If NOT transitional, set the NONTRANSITIONAL flag.
     if !transitional
