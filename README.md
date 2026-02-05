@@ -2,7 +2,47 @@
 
 This is a Crystal port of the Ruby library [simpleidn](https://github.com/mmriis/simpleidn).
 
-It provides easy conversion from punycode ACE strings to unicode strings and vice versa.
+It provides easy conversion from punycode ACE strings to unicode strings and vice versa using IDNA2008 (UTS #46) conformant processing.
+
+## Requirements
+
+This library requires **ICU** (International Components for Unicode) to be installed on your system.
+
+### Installing ICU
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install libicu-dev
+```
+
+**Fedora/RHEL/CentOS:**
+```bash
+sudo dnf install libicu-devel
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S icu
+```
+
+**macOS (Homebrew):**
+```bash
+brew install icu4c
+# You may need to set PKG_CONFIG_PATH:
+export PKG_CONFIG_PATH="/opt/homebrew/opt/icu4c/lib/pkgconfig:$PKG_CONFIG_PATH"
+```
+
+**Alpine Linux:**
+```bash
+apk add icu-dev
+```
+
+### Verifying ICU Installation
+
+```bash
+pkg-config --modversion icu-uc
+# Should output version like: 74.2
+```
 
 ## Installation
 
@@ -31,11 +71,103 @@ SimpleIDN.to_unicode("xn--mllerriis-l8a.com")
 
 # Handle mapped characters (UTS #46)
 SimpleIDN.to_ascii("Faß.de")
-# => "xn--fa-hia.de" (ss maps to ss)
+# => "xn--fa-hia.de" (preserves ß in IDNA2008 nontransitional mode)
 
 SimpleIDN.to_unicode("xn--fa-hia.de")
-# => "fass.de"
+# => "faß.de"
+
+# Transitional processing (IDNA2003 compatibility)
+SimpleIDN.to_ascii("faß.de", transitional: true)
+# => "fass.de" (ß maps to ss in transitional mode)
 ```
+
+### Additional Examples
+
+```crystal
+# International domain names
+SimpleIDN.to_ascii("日本語.jp")          # => "xn--wgv71a119e.jp"
+SimpleIDN.to_ascii("россия.рф")          # => "xn--h1alffa9f.xn--p1ai"
+SimpleIDN.to_ascii("münchen.de")         # => "xn--mnchen-3ya.de"
+SimpleIDN.to_ascii("ελληνικά.gr")        # => "xn--hxargifdar.gr"
+
+# Wildcards and special DNS labels are preserved
+SimpleIDN.to_ascii("*.example.com")      # => "*.example.com"
+SimpleIDN.to_ascii("_dmarc.example.com") # => "_dmarc.example.com"
+
+# Unicode normalization is handled automatically
+SimpleIDN.to_ascii("café.com")           # => "xn--caf-dma.com"
+SimpleIDN.to_ascii("cafe\u0301.com")     # => "xn--caf-dma.com" (same result)
+
+# Invalid domains return nil
+SimpleIDN.to_ascii("-invalid.com")       # => nil (starts with hyphen)
+SimpleIDN.to_unicode("xn---")            # => nil (invalid punycode)
+```
+
+## Features
+
+- **IDNA2008 Conformant**: Uses ICU's UTS #46 implementation with nontransitional processing by default
+- **Full Unicode Support**: Handles all scripts including CJK, Arabic, Hebrew, Cyrillic, Greek, Thai, etc.
+- **Unicode Normalization**: Automatically normalizes combining characters (NFC)
+- **STD3 Rules**: Enforces standard hostname rules (no spaces, control characters, etc.)
+- **BiDi Support**: Correctly handles bidirectional text (Arabic, Hebrew)
+- **CONTEXTJ/CONTEXTO**: Validates context-dependent characters (ZWNJ, ZWJ)
+- **Transitional Mode**: Optional IDNA2003-compatible transitional processing
+
+## API Reference
+
+### `SimpleIDN.to_ascii(domain : String?, transitional : Bool = false) : String?`
+
+Converts an internationalized domain name to ASCII (Punycode) form.
+
+- **domain**: The domain name to convert (can be nil)
+- **transitional**: If true, use transitional processing (IDNA2003 compatibility)
+- **Returns**: ASCII domain name, or `nil` if domain is `nil` or invalid per IDNA2008 rules
+- **Raises**: `SimpleIDN::ConversionError` if an ICU system error occurs
+
+### `SimpleIDN.to_unicode(domain : String?, transitional : Bool = false) : String?`
+
+Converts an ASCII (Punycode) domain name to Unicode form.
+
+- **domain**: The domain name to convert (can be nil)
+- **transitional**: If true, use transitional processing
+- **Returns**: Unicode domain name, or `nil` if domain is `nil` or invalid per IDNA2008 rules
+- **Raises**: `SimpleIDN::ConversionError` if an ICU system error occurs
+
+### Error Handling
+
+The library distinguishes between two types of errors:
+
+| Error Type | Behavior | Example |
+|------------|----------|---------|
+| **Invalid domain** | Returns `nil` | `"-invalid.com"`, `"xn---"` |
+| **ICU system error** | Raises `ConversionError` | Memory allocation failure, malformed input |
+
+```crystal
+# Invalid domains return nil
+result = SimpleIDN.to_ascii("-invalid.com")
+if result.nil?
+  puts "Domain is invalid"
+end
+
+# System errors raise exceptions (rare)
+begin
+  SimpleIDN.to_ascii(domain)
+rescue SimpleIDN::ConversionError => e
+  puts "ICU error: #{e.message}"
+end
+```
+
+## IDNA2008 vs IDNA2003
+
+This library defaults to **IDNA2008 nontransitional** processing:
+
+| Character | IDNA2003 (transitional) | IDNA2008 (nontransitional) |
+|-----------|------------------------|---------------------------|
+| ß (German Eszett) | Maps to "ss" | Preserved as ß |
+| ς (Greek final sigma) | Maps to σ | Preserved as ς |
+| ZWJ/ZWNJ | Generally removed | Context-validated |
+
+Use `transitional: true` for IDNA2003-compatible behavior when needed.
 
 ## Development
 

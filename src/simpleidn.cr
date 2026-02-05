@@ -1,262 +1,149 @@
 require "./simpleidn/version"
-require "./simpleidn/uts46mapping"
+require "./simpleidn/lib_icu"
 
 module SimpleIDN
   class ConversionError < Exception; end
 
-  module Punycode
-    INITIAL_N    =       0x80
-    INITIAL_BIAS =         72
-    DELIMITER    =       0x2D
-    BASE         =         36
-    DAMP         =        700
-    TMIN         =          1
-    TMAX         =         26
-    SKEW         =         38
-    MAXINT       = 0x7FFFFFFF
-    ASCII_MAX    =       0x7F
-
-    EMPTY = ""
-
-    extend self
-
-    def decode_digit(cp)
-      if cp >= 48 && cp <= 57
-        cp - 22
-      elsif cp >= 65 && cp <= 90
-        cp - 65
-      elsif cp >= 97 && cp <= 122
-        cp - 97
-      else
-        BASE
-      end
-    end
-
-    def encode_digit(d)
-      d + 22 + 75 * (d < 26 ? 1 : 0)
-    end
-
-    def adapt(delta, numpoints, firsttime)
-      delta = firsttime ? (delta // DAMP) : (delta >> 1)
-      delta += (delta // numpoints)
-
-      k = 0
-      while delta > (((BASE - TMIN) * TMAX) // 2)
-        delta //= BASE - TMIN
-        k += BASE
-      end
-      k + (BASE - TMIN + 1) * delta // (delta + SKEW)
-    end
-
-    def decode(input : String)
-      input_codepoints = input.codepoints.to_a
-      output = [] of Int32
-
-      n = INITIAL_N
-      i = 0
-      bias = INITIAL_BIAS
-
-      basic = input_codepoints.rindex(DELIMITER) || 0
-
-      input_codepoints[0...basic].each do |char|
-        raise ConversionError.new("Illegal input >= 0x80") if char > ASCII_MAX
-        output << char
-      end
-
-      ic = basic > 0 ? basic + 1 : 0
-      while ic < input_codepoints.size
-        oldi = i
-        w = 1
-        k = BASE
-        loop do
-          raise ConversionError.new("punycode_bad_input(1)") if ic >= input_codepoints.size
-
-          digit = decode_digit(input_codepoints[ic])
-          ic += 1
-
-          raise ConversionError.new("punycode_bad_input(2)") if digit >= BASE
-
-          raise ConversionError.new("punycode_overflow(1)") if digit > (MAXINT - i) // w
-
-          i += digit * w
-          t = k <= bias ? TMIN : k >= bias + TMAX ? TMAX : k - bias
-          break if digit < t
-          raise ConversionError.new("punycode_overflow(2)") if w > MAXINT // (BASE - t)
-
-          w *= BASE - t
-          k += BASE
-        end
-
-        out_len = output.size + 1
-        bias = adapt(i - oldi, out_len, oldi == 0)
-
-        raise ConversionError.new("punycode_overflow(3)") if (i // out_len) > MAXINT - n
-
-        n += (i // out_len)
-        i %= out_len
-
-        output.insert(i, n)
-        i += 1
-      end
-
-      String.build do |str|
-        output.each { |c| str << c.chr }
-      end
-    end
-
-    def encode(input : String)
-      input_codepoints = input.codepoints.to_a
-      output = [] of Int32
-
-      n = INITIAL_N
-      delta = 0
-      bias = INITIAL_BIAS
-
-      # Handle basic code points
-      input_codepoints.each do |char|
-        output << char if char <= ASCII_MAX
-      end
-
-      h = b = output.size
-
-      output << DELIMITER if b > 0
-
-      while h < input_codepoints.size
-        m = MAXINT
-
-        input_codepoints.each do |char|
-          m = char if char >= n && char < m
-        end
-
-        raise ConversionError.new("punycode_overflow (1)") if m - n > ((MAXINT - delta) // (h + 1))
-
-        delta += (m - n) * (h + 1)
-        n = m
-
-        input_codepoints.each do |char|
-          if char < n
-            delta += 1
-            raise ConversionError.new("punycode_overflow(2)") if delta > MAXINT
-          end
-
-          next unless char == n
-
-          q = delta
-          k = BASE
-          loop do
-            t = k <= bias ? TMIN : k >= bias + TMAX ? TMAX : k - bias
-            break if q < t
-            output << encode_digit(t + (q - t) % (BASE - t))
-            q = (q - t) // (BASE - t)
-            k += BASE
-          end
-          output << encode_digit(q)
-          bias = adapt(delta, h + 1, h == b)
-          delta = 0
-          h += 1
-        end
-
-        delta += 1
-        n += 1
-      end
-
-      String.build do |str|
-        output.each { |c| str << c.chr }
-      end
-    end
-  end
-
-  ACE_PREFIX         = "xn--"
-  ASCII_MAX          = 0x7F
-  DOT                = '.'
-  LABEL_SEPARATOR_RE = /[\x{002e}\x{ff0e}\x{3002}\x{ff61}]/
-
-  # Normalized TRANSITIONAL to Array(Int32)
-  TRANSITIONAL = {
-    0x00DF => [0x0073, 0x0073],
-    0x03C2 => [0x03C3],
-    0x200C => [] of Int32,
-    0x200D => [] of Int32,
-  }
-
   extend self
 
-  def uts46map(str : String, transitional : Bool = false)
-    mapped = str.codepoints.to_a.map do |cp|
-      res = SimpleIDN::UTS64MAPPING.fetch(cp) { [cp] }
+  # Convert a domain to ASCII (Punycode).
+  #
+  # If `transitional` is true, it uses transitional processing (e.g., ß -> ss).
+  # If `transitional` is false (default), it uses nontransitional processing (e.g., ß -> xn--zca).
+  #
+  # Returns `nil` if the domain is nil or invalid per IDNA2008 rules.
+  # Raises `ConversionError` if an ICU system error occurs (e.g., memory allocation failure).
+  def to_ascii(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    return domain if domain.empty?
 
-      if transitional
-        if res.size == 1
-          val = res[0]
-          if TRANSITIONAL.has_key?(val)
-            TRANSITIONAL[val]
-          else
-            res
-          end
+    process_domain(domain, transitional) do |label, idna, info, err|
+      convert_label_to_ascii(label, idna, info, err)
+    end
+  end
+
+  # Convert a domain to Unicode.
+  #
+  # If `transitional` is true, it uses transitional processing.
+  #
+  # Returns `nil` if the domain is nil or invalid per IDNA2008 rules.
+  # Raises `ConversionError` if an ICU system error occurs (e.g., memory allocation failure).
+  def to_unicode(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    return domain if domain.empty?
+
+    process_domain(domain, transitional) do |label, idna, info, err|
+      convert_label_to_unicode(label, idna, info, err)
+    end
+  end
+
+  private def process_domain(domain : String, transitional : Bool)
+    # Split by dots, process each label, rejoin
+    labels = domain.split('.')
+    
+    # Options: Use STD3 rules, Check BiDi, Check ContextJ
+    options = LibICU::UIDNA_USE_STD3_RULES |
+              LibICU::UIDNA_CHECK_BIDI |
+              LibICU::UIDNA_CHECK_CONTEXTJ
+
+    # If NOT transitional, set the NONTRANSITIONAL flag.
+    if !transitional
+      options |= LibICU::UIDNA_NONTRANSITIONAL_TO_ASCII
+      options |= LibICU::UIDNA_NONTRANSITIONAL_TO_UNICODE
+    end
+
+    err = LibICU::UErrorCode::U_ZERO_ERROR
+    idna = LibICU.uidna_openUTS46(options.to_u32, pointerof(err))
+
+    if err != LibICU::UErrorCode::U_ZERO_ERROR
+      raise ConversionError.new("ICU uidna_openUTS46 failed with error code #{err.value}")
+    end
+
+    begin
+      info = LibICU::UIDNAInfo.new
+      info.size = sizeof(LibICU::UIDNAInfo).to_i16
+
+      results = labels.map do |label|
+        # Pass through special labels that start with _ or are special chars like *, @
+        if should_pass_through?(label)
+          label
         else
-          res
+          info.errors = 0
+          err = LibICU::UErrorCode::U_ZERO_ERROR
+          result = yield(label, idna, pointerof(info), pointerof(err))
+          return nil if result.nil?
+          result
         end
-      else
-        res
       end
-    end.flatten
 
-    built_str = String.build do |io|
-      mapped.each { |cp| io << cp.chr }
+      results.join(".")
+    ensure
+      LibICU.uidna_close(idna) if idna
     end
-    # ICU::Normalizer::NFC.new.normalize(built_str)
-    # TODO: Add NFC normalization when a suitable MIT-licensed library is available
-    built_str
   end
 
-  def to_ascii(domain : String?, transitional : Bool = false)
-    return nil if domain.nil?
-    mapped_domain = uts46map(domain, transitional)
-    domain_array = mapped_domain.split(LABEL_SEPARATOR_RE)
-    out = [] of String
-    content = false
-
-    domain_array.each do |s|
-      if s.empty? && !content
-        next
-      end
-      content = true
-
-      use_punycode = s.codepoints.any? { |cp| cp > ASCII_MAX }
-      out << (use_punycode ? ACE_PREFIX + Punycode.encode(s) : s)
-    end
-
-    if out.empty? && !mapped_domain.empty?
-      out = [DOT.to_s]
-    end
-
-    out.join(DOT)
+  # Labels that should be passed through without IDNA processing
+  private def should_pass_through?(label : String) : Bool
+    return true if label.empty?
+    return true if label.starts_with?('_')
+    return true if label == "*"
+    return true if label == "@"
+    false
   end
 
-  def to_unicode(domain : String?, transitional : Bool = false)
-    return nil if domain.nil?
-    mapped_domain = uts46map(domain, transitional)
-    domain_array = mapped_domain.split(LABEL_SEPARATOR_RE)
-    out = [] of String
-    content = false
+  private def convert_label_to_ascii(label : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*)
+    capacity = 256
+    dest = Slice(UInt8).new(capacity)
 
-    domain_array.each do |s|
-      if s.empty? && !content
-        next
-      end
-      content = true
+    len = LibICU.uidna_nameToASCII_UTF8(idna, label.to_unsafe, label.bytesize, dest.to_unsafe, capacity, info, err)
 
-      if s.starts_with?(ACE_PREFIX)
-        out << Punycode.decode(s[ACE_PREFIX.size..-1])
-      else
-        out << s
-      end
+    # Check for buffer overflow
+    if (err.value.value == 15) || (len > capacity)
+      err.value = LibICU::UErrorCode::U_ZERO_ERROR
+      info.value.errors = 0
+      capacity = len + 1
+      dest = Slice(UInt8).new(capacity)
+      len = LibICU.uidna_nameToASCII_UTF8(idna, label.to_unsafe, label.bytesize, dest.to_unsafe, capacity, info, err)
     end
 
-    if out.empty? && !mapped_domain.empty?
-      out = [DOT.to_s]
+    # Check for ICU system error (not IDNA validation error)
+    if err.value.value > 0
+      raise ConversionError.new("ICU uidna_nameToASCII_UTF8 failed with error code #{err.value.value}")
     end
 
-    out.join(DOT)
+    # Check for IDNA validation error
+    if info.value.errors > 0
+      return nil
+    end
+
+    String.new(dest[0, len])
+  end
+
+  private def convert_label_to_unicode(label : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*)
+    capacity = 256
+    dest = Slice(UInt8).new(capacity)
+
+    len = LibICU.uidna_nameToUnicode_UTF8(idna, label.to_unsafe, label.bytesize, dest.to_unsafe, capacity, info, err)
+
+    # Check for buffer overflow
+    if (err.value.value == 15) || (len > capacity)
+      err.value = LibICU::UErrorCode::U_ZERO_ERROR
+      info.value.errors = 0
+      capacity = len + 1
+      dest = Slice(UInt8).new(capacity)
+      len = LibICU.uidna_nameToUnicode_UTF8(idna, label.to_unsafe, label.bytesize, dest.to_unsafe, capacity, info, err)
+    end
+
+    # Check for ICU system error (not IDNA validation error)
+    if err.value.value > 0
+      raise ConversionError.new("ICU uidna_nameToUnicode_UTF8 failed with error code #{err.value.value}")
+    end
+
+    # Check for IDNA validation error
+    if info.value.errors > 0
+      return nil
+    end
+
+    String.new(dest[0, len])
   end
 end

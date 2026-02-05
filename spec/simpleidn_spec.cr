@@ -31,10 +31,8 @@ describe SimpleIDN do
       SimpleIDN.to_unicode(".").should eq(".")
     end
 
-    it "raises when the input is an invalid ACE" do
-      expect_raises(SimpleIDN::ConversionError) do
-        SimpleIDN.to_unicode("xn---")
-      end
+    it "returns nil when the input is an invalid ACE" do
+      SimpleIDN.to_unicode("xn---").should be_nil
     end
   end
 
