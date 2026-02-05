@@ -1,5 +1,10 @@
 # simpleidn.cr
 
+> [!CAUTION]
+> **Experimental Implementation:** This project is almost 100% vibe-coded.
+> While it passes an extensive suite of unit and third-party integration tests,
+> the internal logic may not follow traditional patterns. Use at your own risk.
+
 This is a Crystal port of the Ruby library [simpleidn](https://github.com/mmriis/simpleidn).
 
 It provides easy conversion from punycode ACE strings to unicode strings and vice versa using IDNA2008 (UTS #46) conformant processing.
