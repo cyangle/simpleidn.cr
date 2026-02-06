@@ -198,4 +198,53 @@ module SimpleIDN
 
     String.new(dest[0, len])
   end
+
+  # Validates a hostname according to strict rules (e.g., JSON Schema).
+  #
+  # Unlike `to_ascii`, this method rejects:
+  # - Empty strings
+  # - Leading dots (e.g. ".example.com")
+  # - Trailing dots (e.g. "example.com.") - unless allow_trailing_dot: true
+  # - Consecutive dots (e.g. "example..com")
+  #
+  # Parameters:
+  # - `hostname`: The hostname to validate
+  # - `transitional`: Use transitional processing (IDNA2003)
+  # - `strict`: Enforce RFC 1123 rules (no _, *, @)
+  # - `allow_trailing_dot`: Allow a single trailing dot (DNS root)
+  #
+  def valid_hostname?(hostname : String?, transitional : Bool = false, strict : Bool = true, allow_trailing_dot : Bool = false) : Bool
+    return false if hostname.nil? || hostname.empty?
+
+    return false unless valid_domain_structure?(hostname, allow_trailing_dot)
+
+    # Perform IDNA conversion/validation
+    # strict=true enforces RFC 1123 (no *, _, @)
+    ascii = to_ascii(hostname, transitional: transitional, strict: strict)
+    return false if ascii.nil?
+
+    # Check resulting ASCII string for remaining validity issues
+    # to_ascii preserves dots, so we need to ensure the result is clean
+    # (though basic dot checks above catch most structural issues)
+
+    # Check for leading/trailing/consecutive dots in the ASCII result
+    # This catches cases where Unicode dots (e.g. 。) were normalized to ASCII dots
+    valid_domain_structure?(ascii, allow_trailing_dot)
+  end
+
+  private def valid_domain_structure?(domain : String, allow_trailing_dot : Bool) : Bool
+    # Check for leading dots
+    return false if domain.starts_with?('.')
+
+    # Check for consecutive dots
+    return false if domain.includes?("..")
+
+    # Check for trailing dot
+    if domain.ends_with?('.')
+      return false unless allow_trailing_dot
+      return false if domain == "." # Single dot is not a valid hostname
+    end
+
+    true
+  end
 end
