@@ -13,13 +13,27 @@ module SimpleIDN
   # This is the presentation format limit (without trailing dot)
   MAX_HOSTNAME_LENGTH = 253
 
-  # RFC 1035: Maximum label length in bytes (ASCII octets)
-  MAX_LABEL_LENGTH = 63
-
   # Base IDNA options (always applied)
   private BASE_UIDNA_OPTIONS = LibICU::UIDNA_CHECK_BIDI |
                                LibICU::UIDNA_CHECK_CONTEXTJ |
                                LibICU::UIDNA_CHECK_CONTEXTO
+
+  # Validation profiles for different domain name types
+  private struct Profile
+    getter strict : Bool
+    getter allow_trailing_dot : Bool
+    getter require_trailing_dot : Bool
+    getter max_length : Int32
+
+    def initialize(@strict = true, @allow_trailing_dot = false, @require_trailing_dot = false, @max_length = MAX_HOSTNAME_LENGTH)
+    end
+  end
+
+  # Pre-defined immutable profiles to avoid repeated allocations
+  @@profile_hostname = Profile.new(strict: true, allow_trailing_dot: false)
+  @@profile_permissive = Profile.new(strict: false, allow_trailing_dot: false)
+  @@profile_dns = Profile.new(strict: false, allow_trailing_dot: true)
+  @@profile_fqdn = Profile.new(strict: false, allow_trailing_dot: true, require_trailing_dot: true, max_length: 254)
 
   extend self
 
@@ -92,11 +106,11 @@ module SimpleIDN
   # - `SimpleIDN::ConversionError` if an ICU system error occurs
   def to_ascii(domain : String?, transitional : Bool = false, strict : Bool = true) : String?
     return nil if domain.nil?
-    return domain if domain.empty?
 
     idna : LibICU::UIDNA = select_idna(transitional, strict)
+    profile = strict ? @@profile_hostname : @@profile_permissive
 
-    process_domain(domain, idna, to_ascii: true)
+    process_domain(domain, idna, to_ascii: true, profile: profile)
   end
 
   # Convert a domain to Unicode.
@@ -115,63 +129,87 @@ module SimpleIDN
   # - `SimpleIDN::ConversionError` if an ICU system error occurs
   def to_unicode(domain : String?, transitional : Bool = false, strict : Bool = true) : String?
     return nil if domain.nil?
-    return domain if domain.empty?
 
     idna : LibICU::UIDNA = select_idna(transitional, strict)
+    profile = strict ? @@profile_hostname : @@profile_permissive
 
-    process_domain(domain, idna, to_ascii: false)
+    process_domain(domain, idna, to_ascii: false, profile: profile)
   end
 
-  private def process_domain(domain : String, idna : LibICU::UIDNA, to_ascii : Bool) : String?
-    # Split by dots, process each label, rejoin
-    labels : Array(String) = domain.split('.')
+  # Specialized methods for Hostname (RFC 1123)
+  def to_ascii_hostname(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    idna : LibICU::UIDNA = select_idna(transitional, strict: true)
+    process_domain(domain, idna, to_ascii: true, profile: @@profile_hostname)
+  end
 
+  def to_unicode_hostname(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    idna : LibICU::UIDNA = select_idna(transitional, strict: true)
+    process_domain(domain, idna, to_ascii: false, profile: @@profile_hostname)
+  end
+
+  # Specialized methods for DNS Name (Permissive, allows _, *)
+  def to_ascii_dns(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    idna : LibICU::UIDNA = select_idna(transitional, strict: false)
+    process_domain(domain, idna, to_ascii: true, profile: @@profile_dns)
+  end
+
+  def to_unicode_dns(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    idna : LibICU::UIDNA = select_idna(transitional, strict: false)
+    process_domain(domain, idna, to_ascii: false, profile: @@profile_dns)
+  end
+
+  # Specialized methods for FQDN (DNS Name with trailing dot)
+  def to_ascii_fqdn(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    idna : LibICU::UIDNA = select_idna(transitional, strict: false)
+    process_domain(domain, idna, to_ascii: true, profile: @@profile_fqdn)
+  end
+
+  def to_unicode_fqdn(domain : String?, transitional : Bool = false) : String?
+    return nil if domain.nil?
+    idna : LibICU::UIDNA = select_idna(transitional, strict: false)
+    process_domain(domain, idna, to_ascii: false, profile: @@profile_fqdn)
+  end
+
+  private def process_domain(domain : String, idna : LibICU::UIDNA, to_ascii : Bool, profile : Profile) : String?
     info : LibICU::UIDNAInfo = LibICU::UIDNAInfo.new
     info.size = sizeof(LibICU::UIDNAInfo).to_i16
+    info.errors = 0
+    err : LibICU::UErrorCode = LibICU::UErrorCode::U_ZERO_ERROR
 
-    results : Array(String) = labels.map do |label|
-      # Empty labels are passed through (handles trailing dots, consecutive dots)
-      if label.empty?
-        label
-      else
-        info.errors = 0
-        err : LibICU::UErrorCode = LibICU::UErrorCode::U_ZERO_ERROR
-
-        result : String? = if to_ascii
-          convert_label_to_ascii(label, idna, pointerof(info), pointerof(err))
-        else
-          convert_label_to_unicode(label, idna, pointerof(info), pointerof(err))
-        end
-
-        return nil if result.nil?
-        result
-      end
+    result : String? = if to_ascii
+      convert_string_to_ascii(domain, idna, pointerof(info), pointerof(err), profile)
+    else
+      convert_string_to_unicode(domain, idna, pointerof(info), pointerof(err), profile)
     end
 
-    final_result : String = results.join(".")
+    return nil if result.nil?
 
-    # Validate total hostname length for ASCII conversion
-    # RFC 1035: hostname must not exceed 253 ASCII characters (presentation format)
-    if to_ascii && final_result.bytesize > MAX_HOSTNAME_LENGTH
+    # Validate total length
+    if to_ascii && result.bytesize > profile.max_length
       return nil
     end
 
-    final_result
+    result
   end
 
-  private def convert_label_to_ascii(label : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*) : String?
-    convert_label(info, err, "uidna_nameToASCII_UTF8") do |dest_ptr, capacity|
-      LibICU.uidna_nameToASCII_UTF8(idna, label.to_unsafe, label.bytesize, dest_ptr, capacity, info, err)
+  private def convert_string_to_ascii(string : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*, profile : Profile) : String?
+    convert_string(info, err, "uidna_nameToASCII_UTF8", profile) do |dest_ptr, capacity|
+      LibICU.uidna_nameToASCII_UTF8(idna, string.to_unsafe, string.bytesize, dest_ptr, capacity, info, err)
     end
   end
 
-  private def convert_label_to_unicode(label : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*) : String?
-    convert_label(info, err, "uidna_nameToUnicode_UTF8") do |dest_ptr, capacity|
-      LibICU.uidna_nameToUnicode_UTF8(idna, label.to_unsafe, label.bytesize, dest_ptr, capacity, info, err)
+  private def convert_string_to_unicode(string : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*, profile : Profile) : String?
+    convert_string(info, err, "uidna_nameToUnicode_UTF8", profile) do |dest_ptr, capacity|
+      LibICU.uidna_nameToUnicode_UTF8(idna, string.to_unsafe, string.bytesize, dest_ptr, capacity, info, err)
     end
   end
 
-  private def convert_label(info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*, function_name : String, &)
+  private def convert_string(info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*, function_name : String, profile : Profile, &)
     capacity : Int32 = INITIAL_BUFFER_CAPACITY
     dest : Slice(UInt8) = Slice(UInt8).new(capacity)
 
@@ -191,60 +229,44 @@ module SimpleIDN
       raise ConversionError.new("ICU #{function_name} failed with error code #{err.value.value}")
     end
 
-    # Check for IDNA validation error
+    # Check for IDNA validation error (including UIDNA_ERROR_EMPTY_LABEL)
     if info.value.errors > 0
       return nil
     end
 
-    String.new(dest[0, len])
+    res = String.new(dest[0, len])
+
+    # Handle trailing dot based on profile
+    if res.ends_with?('.')
+      return nil unless profile.allow_trailing_dot
+    elsif profile.require_trailing_dot
+      res = res + "."
+    end
+
+    res
   end
 
   # Validates a hostname according to strict rules (e.g., JSON Schema).
   #
-  # Unlike `to_ascii`, this method rejects:
+  # Rejects:
   # - Empty strings
   # - Leading dots (e.g. ".example.com")
-  # - Trailing dots (e.g. "example.com.") - unless allow_trailing_dot: true
+  # - Trailing dots (e.g. "example.com.")
   # - Consecutive dots (e.g. "example..com")
   #
   # Parameters:
   # - `hostname`: The hostname to validate
   # - `transitional`: Use transitional processing (IDNA2003)
-  # - `strict`: Enforce RFC 1123 rules (no _, *, @)
-  # - `allow_trailing_dot`: Allow a single trailing dot (DNS root)
   #
-  def valid_hostname?(hostname : String?, transitional : Bool = false, strict : Bool = true, allow_trailing_dot : Bool = false) : Bool
-    return false if hostname.nil? || hostname.empty?
-
-    return false unless valid_domain_structure?(hostname, allow_trailing_dot)
-
-    # Perform IDNA conversion/validation
-    # strict=true enforces RFC 1123 (no *, _, @)
-    ascii = to_ascii(hostname, transitional: transitional, strict: strict)
-    return false if ascii.nil?
-
-    # Check resulting ASCII string for remaining validity issues
-    # to_ascii preserves dots, so we need to ensure the result is clean
-    # (though basic dot checks above catch most structural issues)
-
-    # Check for leading/trailing/consecutive dots in the ASCII result
-    # This catches cases where Unicode dots (e.g. 。) were normalized to ASCII dots
-    valid_domain_structure?(ascii, allow_trailing_dot)
+  def valid_hostname?(hostname : String?, transitional : Bool = false) : Bool
+    to_ascii_hostname(hostname, transitional: transitional) != nil
   end
 
-  private def valid_domain_structure?(domain : String, allow_trailing_dot : Bool) : Bool
-    # Check for leading dots
-    return false if domain.starts_with?('.')
+  def valid_dns_name?(domain : String?, transitional : Bool = false) : Bool
+    to_ascii_dns(domain, transitional: transitional) != nil
+  end
 
-    # Check for consecutive dots
-    return false if domain.includes?("..")
-
-    # Check for trailing dot
-    if domain.ends_with?('.')
-      return false unless allow_trailing_dot
-      return false if domain == "." # Single dot is not a valid hostname
-    end
-
-    true
+  def valid_fqdn?(domain : String?, transitional : Bool = false) : Bool
+    to_ascii_fqdn(domain, transitional: transitional) != nil
   end
 end

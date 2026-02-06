@@ -8,31 +8,16 @@
 This is a Crystal port of the Ruby library [simpleidn](https://github.com/mmriis/simpleidn).
 It provides easy conversion from punycode ACE strings to unicode strings and vice versa using IDNA2008 (UTS #46) conformant processing.
 
-> [!IMPORTANT]
-> **Breaking Change in v0.6.0:** The `strict` parameter defaults to `true`, enforcing RFC 1123 hostname rules.
-> This means wildcards (`*`) and underscores (`_`) are rejected by default. See [Migration Guide](#migrating-from-v05x).
+> [!TIP]
+> **New in v0.8.0:** This release introduces specialized methods (`*_hostname`, `*_dns`, `*_fqdn`) to handle the nuances of strict hostnames vs. DNS records. The generic `to_ascii` methods are now deprecated to encourage explicit intent.
 
 ## Features
 
 - **IDNA2008 Conformant**: Uses ICU's UTS #46 implementation (nontransitional by default).
+- **Type-Safe API**: Specialized methods for Hostnames, DNS records, and FQDNs.
 - **JSON Schema Compatible**: Validates `hostname` and `idn-hostname` formats (RFC 1123/5890).
 - **Full Unicode Support**: CJK, Emoji, BiDi (Arabic/Hebrew), ContextJ/ContextO rules.
-- **DNS Record Support**: Optional non-strict mode for wildcards (`*`), underscores (`_`), and SRV records.
 - **High Performance**: Reuses global, thread-safe ICU instances.
-
-## Requirements
-
-Requires **ICU** (International Components for Unicode) installed on your system.
-
-### Installing ICU
-
-*   **Ubuntu/Debian:** `sudo apt-get install libicu-dev`
-*   **Fedora/RHEL:** `sudo dnf install libicu-devel`
-*   **Arch:** `sudo pacman -S icu`
-*   **macOS:** `brew install icu4c` (Set `PKG_CONFIG_PATH` if needed)
-*   **Alpine:** `apk add icu-dev`
-
-Verify with: `pkg-config --modversion icu-uc`
 
 ## Installation
 
@@ -44,109 +29,106 @@ Verify with: `pkg-config --modversion icu-uc`
     ```
 2.  Run `shards install`
 
+## Requirements
+
+Requires **ICU** (International Components for Unicode) installed on your system.
+
+*   **Ubuntu/Debian:** `sudo apt-get install libicu-dev`
+*   **Fedora/RHEL:** `sudo dnf install libicu-devel`
+*   **macOS:** `brew install icu4c`
+*   **Alpine:** `apk add icu-dev`
+
+Verify with: `pkg-config --modversion icu-uc`
+
 ## Usage
 
 ```crystal
 require "simpleidn"
+```
 
-# --- Basic Conversion ---
-SimpleIDN.to_ascii("møllerriis.com")       # => "xn--mllerriis-l8a.com"
-SimpleIDN.to_unicode("xn--mllerriis-l8a.com") # => "møllerriis.com"
+### 1. Standard Hostnames (Strict)
+Use for URLs, email domains, and user input. Enforces RFC 1123 rules (Letters, Digits, Hyphens). Rejects wildcards, underscores, and trailing dots.
 
-# --- IDNA2008 Mapping ---
-SimpleIDN.to_ascii("Faß.de")               # => "xn--fa-hia.de" (ß preserved)
+```crystal
+SimpleIDN.to_ascii_hostname("münchen.de")      # => "xn--mnchen-3ya.de"
+SimpleIDN.to_unicode_hostname("xn--mnchen-3ya.de") # => "münchen.de"
 
-# --- Transitional (IDNA2003) ---
-SimpleIDN.to_ascii("faß.de", transitional: true) # => "fass.de" (ß -> ss)
+# Validation
+SimpleIDN.valid_hostname?("münchen.de")       # => true
+SimpleIDN.valid_hostname?("*.example.com")    # => false (Wildcard rejected)
+```
 
-# --- Validation ---
-SimpleIDN.valid_hostname?("münchen.de")    # => true
-SimpleIDN.valid_hostname?("-invalid")      # => false
+### 2. DNS Records (Permissive)
+Use for DNS management (SRV, DMARC, TXT records). Allows wildcards (`*`), underscores (`_`), and trailing dots.
+
+```crystal
+SimpleIDN.to_ascii_dns("_sip._tcp.example.com") # => "_sip._tcp.example.com"
+SimpleIDN.to_ascii_dns("*.example.com")         # => "*.example.com"
+
+# Validation
+SimpleIDN.valid_dns_name?("_dmarc.example.com") # => true
+```
+
+### 3. Fully Qualified Domain Names (FQDN)
+Ensures the domain ends with a trailing dot (`.`). Useful for absolute DNS resolution.
+
+```crystal
+SimpleIDN.to_ascii_fqdn("example.com")      # => "example.com."
+SimpleIDN.to_ascii_fqdn("example.com.")     # => "example.com."
+
+# Validation
+SimpleIDN.valid_fqdn?("example.com.")       # => true
+SimpleIDN.valid_fqdn?("example.com")        # => false (Missing dot)
 ```
 
 ## API Reference
 
-### 1. `SimpleIDN.to_ascii(domain, transitional, strict)`
-Converts internationalized domain names to ASCII (Punycode).
+### Comparison Table
 
-| Param | Default | Description |
-|---|---|---|
-| `domain` | - | Domain string (can be nil) |
-| `transitional` | `false` | Use IDNA2003 mapping (e.g., ß -> ss) |
-| `strict` | `true` | Enforce RFC 1123 (No wildcards/underscores) |
+| Method Suffix | Strictness | Allowed Chars | Trailing Dot | Max Length | Use Case |
+|---|---|---|---|---|---|
+| `_hostname` | Strict | LDH (a-z, 0-9, -) | **Rejected** | 253 | URLs, Emails |
+| `_dns` | Permissive | LDH + `_`, `*`, `@` | Allowed | 253 | DNS Records |
+| `_fqdn` | Permissive | LDH + `_`, `*`, `@` | **Required** | 254 | Absolute DNS |
 
-**Returns:** ASCII string or `nil` if invalid.
+### Validation Predicates
+*   `valid_hostname?(domain)`
+*   `valid_dns_name?(domain)`
+*   `valid_fqdn?(domain)`
 
-### 2. `SimpleIDN.to_unicode(domain, transitional, strict)`
-Converts Punycode to Unicode. Parameters behave same as `to_ascii`.
+### Legacy Methods (Deprecated)
+*   `SimpleIDN.to_ascii(domain, transitional, strict)`
+*   `SimpleIDN.to_unicode(domain, transitional, strict)`
 
-### 3. `SimpleIDN.valid_hostname?(hostname, transitional, strict, allow_trailing_dot)`
-Validates that a string is a valid hostname (structural + IDNA checks).
+*Use the specialized methods above instead.*
 
-| Param | Default | Description |
-|---|---|---|
-| `hostname` | - | String to check |
-| `strict` | `true` | Reject `*`, `_`, `@` (RFC 1123) |
-| `allow_trailing_dot`| `false` | Allow single trailing dot (DNS root) |
+## Core Concepts
 
-#### JSON Schema Validation Recommendations
-For [JSON Schema](https://json-schema.org/understanding-json-schema/reference/string.html#resource-identifiers) formats:
-*   **`idn-hostname`**: Use `SimpleIDN.valid_hostname?(str)`
-*   **`hostname`**: Use `SimpleIDN.valid_hostname?(str)` **and** ensure the string is ASCII only (e.g., `str.ascii_only?`).
-
-### Error Handling
-*   **Invalid Domain**: Returns `nil` (e.g., `SimpleIDN.to_ascii("*.com")` in strict mode).
-*   **System Error**: Raises `SimpleIDN::ConversionError` (ICU failures).
-
-## Core Concepts & Configuration
-
-### Strict Mode (Hostname vs DNS)
-Defaults to `strict: true` (RFC 1123).
-
-| Mode | Allowed Chars | Use Case |
-|---|---|---|
-| `strict: true` | LDH (Letters, Digits, Hyphens) | Hostnames, URLs, Email domains |
-| `strict: false`| LDH + `*`, `_`, `@` | DNS Records (SRV, DMARC, Wildcards) |
-
-```crystal
-SimpleIDN.to_ascii("*.example.com")                 # => nil (Strict)
-SimpleIDN.to_ascii("*.example.com", strict: false)  # => "*.example.com"
-```
-
-### IDNA2008 vs IDNA2003 (Transitional)
+### IDNA2008 vs IDNA2003
 Defaults to **Nontransitional** (IDNA2008).
-*   **Nontransitional**: `ß` -> `ß`, `ς` -> `ς`
-*   **Transitional**: `ß` -> `ss`, `ς` -> `σ` (Use `transitional: true`)
+*   **Nontransitional**: `ß` -> `ß`, `ς` -> `ς` (Default)
+*   **Transitional**: `ß` -> `ss`, `ς` -> `σ` (Pass `transitional: true`)
 
-### Hostname Length Limits
-Enforces RFC 1035 limits:
-*   Label limit: 63 bytes (`SimpleIDN::MAX_LABEL_LENGTH`)
-*   Hostname limit: 253 bytes (`SimpleIDN::MAX_HOSTNAME_LENGTH`)
+### Strict Mode & JSON Schema
+For [JSON Schema](https://json-schema.org/understanding-json-schema/reference/string.html#resource-identifiers) compliance:
+*   **`idn-hostname`**: Use `SimpleIDN.valid_hostname?(str)`
+*   **`hostname`**: Use `SimpleIDN.valid_hostname?(str)` **and** `str.ascii_only?`.
 
 ## Performance & Lifecycle
 
-*   **Global, Thread-Safe**: Uses 4 global, immutable `UIDNA` instances (one for each config permutation). These are **thread-safe and lock-free** (per ICU `uidna_openUTS46` documentation), allowing high-concurrency usage without mutex contention.
-*   **Memory Footprint**: Adds approximately **~3.2 MB** RSS overhead compared to a "Hello World" application. This is almost entirely due to loading shared ICU libraries (`libicudata`, `libicuuc`) and data tables. Instantiating all 4 modes upfront costs effectively zero additional memory due to shared backing data.
-*   **No Memory Leaks**: Stable memory usage under load (verified with 100k+ iterations), relying on standard GC for wrapper objects.
-*   **Fail-Fast**: Raises `InitializationError` on startup if ICU is broken.
-*   **Cleanup**: Uses `at_exit` to free resources.
+*   **Global, Thread-Safe**: Uses global, immutable `UIDNA` instances. Safe for high-concurrency use.
+*   **Memory**: ~3.2 MB overhead (ICU data tables). Zero per-request allocation cost beyond string result.
+*   **Safety**: Uses `at_exit` to clean up ICU resources.
 
 > [!WARNING]
-> **Testing Caveat (Critical):**
-> When running specs, you **MUST** require `simpleidn` *before* `spec`.
->
-> **Correct `spec_helper.cr`:**
-> ```crystal
-> require "../src/simpleidn" # MUST be first
-> require "spec"
-> ```
-> If inverted, the cleanup handler runs too early, causing segfaults during tests.
+> **Testing Caveat:** When running specs, `require "simpleidn"` **before** `require "spec"` to prevent premature cleanup segfaults.
 
-## Migrating from v0.5.x
-v0.6.0 introduces `strict: true` by default.
-*   **Old Behavior**: `SimpleIDN.to_ascii("*.com")` worked.
-*   **New Behavior**: Returns `nil`.
-*   **Fix**: Add `strict: false` for DNS record handling.
+## Migration Guide
+
+### Upgrading to v0.8.0
+1.  Replace `SimpleIDN.to_ascii(domain)` with `SimpleIDN.to_ascii_hostname(domain)` for standard usage.
+2.  Replace `SimpleIDN.to_ascii(domain, strict: false)` with `SimpleIDN.to_ascii_dns(domain)`.
+3.  Use `SimpleIDN.to_ascii_fqdn(domain)` if you need absolute domain names.
 
 ## Development
 

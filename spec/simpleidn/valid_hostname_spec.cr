@@ -1,4 +1,5 @@
-require "./spec_helper"
+# encoding: utf-8
+require "../spec_helper"
 
 describe "SimpleIDN.valid_hostname?" do
   describe "Basic hostname validation" do
@@ -35,7 +36,7 @@ describe "SimpleIDN.valid_hostname?" do
       SimpleIDN.valid_hostname?(".com").should be_false
     end
 
-    it "rejects trailing dots by default" do
+    it "rejects trailing dots" do
       SimpleIDN.valid_hostname?("example.com.").should be_false
       SimpleIDN.valid_hostname?("com.").should be_false
       SimpleIDN.valid_hostname?(".").should be_false
@@ -45,29 +46,14 @@ describe "SimpleIDN.valid_hostname?" do
       SimpleIDN.valid_hostname?("example..com").should be_false
       SimpleIDN.valid_hostname?("a..b").should be_false
     end
-
-    it "allows trailing dots when explicitly allowed" do
-      SimpleIDN.valid_hostname?("example.com.", allow_trailing_dot: true).should be_true
-      SimpleIDN.valid_hostname?("com.", allow_trailing_dot: true).should be_true
-    end
-
-    it "rejects single dot even if trailing dot is allowed" do
-      SimpleIDN.valid_hostname?(".", allow_trailing_dot: true).should be_false
-    end
   end
 
   describe "Unicode separators" do
-    it "rejects unicode dots that normalize to ASCII dots (by default)" do
-      # These normalize to "example.com." which is rejected due to trailing dot
+    it "rejects unicode dots that normalize to ASCII dots at the end" do
+      # These normalize to "example.com." which is rejected
       SimpleIDN.valid_hostname?("example.com。").should be_false
       SimpleIDN.valid_hostname?("example.com．").should be_false
       SimpleIDN.valid_hostname?("example.com｡").should be_false
-    end
-
-    it "allows unicode dots if trailing dot is allowed" do
-      SimpleIDN.valid_hostname?("example.com。", allow_trailing_dot: true).should be_true
-      SimpleIDN.valid_hostname?("example.com．", allow_trailing_dot: true).should be_true
-      SimpleIDN.valid_hostname?("example.com｡", allow_trailing_dot: true).should be_true
     end
 
     it "rejects consecutive unicode dots" do
@@ -77,34 +63,11 @@ describe "SimpleIDN.valid_hostname?" do
   end
 
   describe "Strict mode (RFC 1123)" do
-    it "defaults to strict: true" do
+    it "enforces strict rules" do
       # Rejects *, _, @
       SimpleIDN.valid_hostname?("*.example.com").should be_false
       SimpleIDN.valid_hostname?("_dmarc.example.com").should be_false
       SimpleIDN.valid_hostname?("user@example.com").should be_false
-    end
-
-    it "allows DNS labels in non-strict mode" do
-      SimpleIDN.valid_hostname?("*.example.com", strict: false).should be_true
-      SimpleIDN.valid_hostname?("_dmarc.example.com", strict: false).should be_true
-    end
-
-    it "still enforcing structural rules in non-strict mode" do
-      # Even in non-strict mode, we don't want empty labels/leading dots if checking for validity
-      SimpleIDN.valid_hostname?(".example.com", strict: false).should be_false
-      SimpleIDN.valid_hostname?("example.com.", strict: false).should be_false
-      SimpleIDN.valid_hostname?("example..com", strict: false).should be_false
-    end
-  end
-
-  describe "Transitional processing" do
-    it "supports transitional option" do
-      # ß -> ss in transitional
-      # ß -> xn--zca (preserved) in nontransitional
-
-      # Just verifying it doesn't crash, exact output depends on IDNA version
-      SimpleIDN.valid_hostname?("faß.de", transitional: true).should be_true
-      SimpleIDN.valid_hostname?("faß.de", transitional: false).should be_true
     end
   end
 end
