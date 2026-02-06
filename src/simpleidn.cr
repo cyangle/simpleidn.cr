@@ -9,16 +9,33 @@ module SimpleIDN
   # Constants
   private INITIAL_BUFFER_CAPACITY = 256
 
-  private DEFAULT_UIDNA_OPTIONS = LibICU::UIDNA_USE_STD3_RULES |
-                                  LibICU::UIDNA_CHECK_BIDI |
-                                  LibICU::UIDNA_CHECK_CONTEXTJ |
-                                  LibICU::UIDNA_CHECK_CONTEXTO
+  # RFC 1035/5890: Maximum hostname/domain name length in bytes (ASCII octets)
+  # This is the presentation format limit (without trailing dot)
+  MAX_HOSTNAME_LENGTH = 253
+
+  # RFC 1035: Maximum label length in bytes (ASCII octets)
+  MAX_LABEL_LENGTH = 63
+
+  # Base IDNA options (always applied)
+  private BASE_UIDNA_OPTIONS = LibICU::UIDNA_CHECK_BIDI |
+                               LibICU::UIDNA_CHECK_CONTEXTJ |
+                               LibICU::UIDNA_CHECK_CONTEXTO
 
   extend self
 
-  # Initialize global IDNA instances
-  private def self.init_idna(transitional : Bool) : LibICU::UIDNA
-    options : Int32 = DEFAULT_UIDNA_OPTIONS
+  # IDNA instance configuration
+  # We need 4 instances to cover all combinations:
+  # - strict (with STD3) vs non-strict (without STD3)
+  # - transitional vs non-transitional
+
+  private def self.init_idna(transitional : Bool, strict : Bool) : LibICU::UIDNA
+    options : Int32 = BASE_UIDNA_OPTIONS
+
+    # STD3 rules enforce hostname character restrictions (LDH rule)
+    # When strict=true, characters like _, *, @ are rejected
+    if strict
+      options |= LibICU::UIDNA_USE_STD3_RULES
+    end
 
     if !transitional
       options |= LibICU::UIDNA_NONTRANSITIONAL_TO_ASCII
@@ -35,32 +52,72 @@ module SimpleIDN
     idna
   end
 
-  # Eagerly initialize instances for transitional (true) and non-transitional (false) modes
-  @@idna_nontransitional : LibICU::UIDNA = init_idna(false)
-  @@idna_transitional : LibICU::UIDNA = init_idna(true)
+  # Eagerly initialize all 4 IDNA instances
+  # Naming: @@idna_{strict|permissive}_{nontransitional|transitional}
+  @@idna_strict_nontransitional : LibICU::UIDNA = init_idna(transitional: false, strict: true)
+  @@idna_strict_transitional : LibICU::UIDNA = init_idna(transitional: true, strict: true)
+  @@idna_permissive_nontransitional : LibICU::UIDNA = init_idna(transitional: false, strict: false)
+  @@idna_permissive_transitional : LibICU::UIDNA = init_idna(transitional: true, strict: false)
 
   # Cleanup on exit
   at_exit do
-    LibICU.uidna_close(@@idna_nontransitional)
-    LibICU.uidna_close(@@idna_transitional)
+    LibICU.uidna_close(@@idna_strict_nontransitional)
+    LibICU.uidna_close(@@idna_strict_transitional)
+    LibICU.uidna_close(@@idna_permissive_nontransitional)
+    LibICU.uidna_close(@@idna_permissive_transitional)
+  end
+
+  # Select the appropriate IDNA instance based on options
+  private def select_idna(transitional : Bool, strict : Bool) : LibICU::UIDNA
+    if strict
+      transitional ? @@idna_strict_transitional : @@idna_strict_nontransitional
+    else
+      transitional ? @@idna_permissive_transitional : @@idna_permissive_nontransitional
+    end
   end
 
   # Convert a domain to ASCII (Punycode).
-  def to_ascii(domain : String?, transitional : Bool = false) : String?
+  #
+  # Parameters:
+  # - `domain`: The domain name to convert (can be nil)
+  # - `transitional`: If true, use transitional processing (IDNA2003 compatibility, e.g., ß -> ss)
+  # - `strict`: If true (default), enforce RFC 1123 hostname rules (LDH characters only).
+  #   When strict=true, labels containing `_`, `*`, `@`, or other non-LDH characters are rejected.
+  #   When strict=false, these characters are allowed (for DNS records like SRV, DMARC, wildcards).
+  #
+  # Returns:
+  # - ASCII domain name, or `nil` if domain is `nil` or invalid
+  #
+  # Raises:
+  # - `SimpleIDN::ConversionError` if an ICU system error occurs
+  def to_ascii(domain : String?, transitional : Bool = false, strict : Bool = true) : String?
     return nil if domain.nil?
     return domain if domain.empty?
 
-    idna : LibICU::UIDNA = transitional ? @@idna_transitional : @@idna_nontransitional
+    idna : LibICU::UIDNA = select_idna(transitional, strict)
 
     process_domain(domain, idna, to_ascii: true)
   end
 
   # Convert a domain to Unicode.
-  def to_unicode(domain : String?, transitional : Bool = false) : String?
+  #
+  # Parameters:
+  # - `domain`: The domain name to convert (can be nil)
+  # - `transitional`: If true, use transitional processing
+  # - `strict`: If true (default), enforce RFC 1123 hostname rules (LDH characters only).
+  #   When strict=true, labels containing `_`, `*`, `@`, or other non-LDH characters are rejected.
+  #   When strict=false, these characters are allowed (for DNS records like SRV, DMARC, wildcards).
+  #
+  # Returns:
+  # - Unicode domain name, or `nil` if domain is `nil` or invalid
+  #
+  # Raises:
+  # - `SimpleIDN::ConversionError` if an ICU system error occurs
+  def to_unicode(domain : String?, transitional : Bool = false, strict : Bool = true) : String?
     return nil if domain.nil?
     return domain if domain.empty?
 
-    idna : LibICU::UIDNA = transitional ? @@idna_transitional : @@idna_nontransitional
+    idna : LibICU::UIDNA = select_idna(transitional, strict)
 
     process_domain(domain, idna, to_ascii: false)
   end
@@ -73,8 +130,8 @@ module SimpleIDN
     info.size = sizeof(LibICU::UIDNAInfo).to_i16
 
     results : Array(String) = labels.map do |label|
-      # Pass through special labels that start with _ or are special chars like *, @
-      if should_pass_through?(label)
+      # Empty labels are passed through (handles trailing dots, consecutive dots)
+      if label.empty?
         label
       else
         info.errors = 0
@@ -91,16 +148,15 @@ module SimpleIDN
       end
     end
 
-    results.join(".")
-  end
+    final_result : String = results.join(".")
 
-  # Labels that should be passed through without IDNA processing
-  private def should_pass_through?(label : String) : Bool
-    return true if label.empty?
-    return true if label.starts_with?('_')
-    return true if label == "*"
-    return true if label == "@"
-    false
+    # Validate total hostname length for ASCII conversion
+    # RFC 1035: hostname must not exceed 253 ASCII characters (presentation format)
+    if to_ascii && final_result.bytesize > MAX_HOSTNAME_LENGTH
+      return nil
+    end
+
+    final_result
   end
 
   private def convert_label_to_ascii(label : String, idna : LibICU::UIDNA, info : LibICU::UIDNAInfo*, err : LibICU::UErrorCode*) : String?

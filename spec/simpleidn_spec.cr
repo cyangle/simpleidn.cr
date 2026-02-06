@@ -15,12 +15,20 @@ describe SimpleIDN do
       end
     end
 
-    it "should respect * and not try to decode it" do
-      SimpleIDN.to_unicode("*.xn--mllerriis-l8a.com").should eq("*.møllerriis.com")
+    it "should handle * in non-strict mode" do
+      SimpleIDN.to_unicode("*.xn--mllerriis-l8a.com", strict: false).should eq("*.møllerriis.com")
     end
 
-    it "should respect leading _ and not try to encode it" do
-      SimpleIDN.to_unicode("_something.xn--mllerriis-l8a.com").should eq("_something.møllerriis.com")
+    it "should handle leading _ in non-strict mode" do
+      SimpleIDN.to_unicode("_something.xn--mllerriis-l8a.com", strict: false).should eq("_something.møllerriis.com")
+    end
+
+    it "should reject * in strict mode (default)" do
+      SimpleIDN.to_unicode("*.xn--mllerriis-l8a.com").should be_nil
+    end
+
+    it "should reject leading _ in strict mode (default)" do
+      SimpleIDN.to_unicode("_something.xn--mllerriis-l8a.com").should be_nil
     end
 
     it "should return nil for nil" do
@@ -43,16 +51,28 @@ describe SimpleIDN do
       end
     end
 
-    it "should respect * and not try to encode it" do
-      SimpleIDN.to_ascii("*.hello.com").should eq("*.hello.com")
+    it "should handle * in non-strict mode" do
+      SimpleIDN.to_ascii("*.hello.com", strict: false).should eq("*.hello.com")
     end
 
-    it "should respect @ and not try to encode it" do
-      SimpleIDN.to_ascii("@.hello.com").should eq("@.hello.com")
+    it "should reject * in strict mode (default)" do
+      SimpleIDN.to_ascii("*.hello.com").should be_nil
     end
 
-    it "should respect leading _ and not try to encode it" do
-      SimpleIDN.to_ascii("_something.example.org").should eq("_something.example.org")
+    it "should handle @ in non-strict mode" do
+      SimpleIDN.to_ascii("@.hello.com", strict: false).should eq("@.hello.com")
+    end
+
+    it "should reject @ in strict mode (default)" do
+      SimpleIDN.to_ascii("@.hello.com").should be_nil
+    end
+
+    it "should handle leading _ in non-strict mode" do
+      SimpleIDN.to_ascii("_something.example.org", strict: false).should eq("_something.example.org")
+    end
+
+    it "should reject leading _ in strict mode (default)" do
+      SimpleIDN.to_ascii("_something.example.org").should be_nil
     end
 
     it "should return nil for nil" do
@@ -63,8 +83,12 @@ describe SimpleIDN do
       SimpleIDN.to_ascii(".").should eq(".")
     end
 
-    it "should return @ if @ is given" do
-      SimpleIDN.to_ascii("@").should eq("@")
+    it "should return @ in non-strict mode" do
+      SimpleIDN.to_ascii("@", strict: false).should eq("@")
+    end
+
+    it "should reject @ in strict mode (default)" do
+      SimpleIDN.to_ascii("@").should be_nil
     end
 
     it "should handle issue 8" do

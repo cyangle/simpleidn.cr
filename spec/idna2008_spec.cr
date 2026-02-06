@@ -163,20 +163,50 @@ describe "IDNA2008 Conformance" do
   end
 
   describe "Label length limits" do
-    it "handles maximum label length (63 chars)" do
+    # RFC 1035: Each label must be 63 bytes or less in ASCII (punycode) form
+    # ICU validates this via UIDNA_LABEL_TOO_LONG error
+
+    it "handles maximum label length (63 chars ASCII)" do
       # Valid 63-character ASCII label
       long_label = "a" * 63
       SimpleIDN.to_ascii(long_label).should eq(long_label)
     end
 
-    it "returns nil for labels exceeding 63 characters in ASCII form" do
-      # This unicode string produces a punycode label > 63 chars
-      # 1234567890ä1234567890123456789012345678901234567890123456 -> too long
-      long_unicode = "1234567890ä1234567890123456789012345678901234567890123456"
-      # ICU should reject this as the ACE form exceeds 63 chars
+    it "rejects labels exceeding 63 characters in ASCII form" do
+      # 64-character ASCII label exceeds the limit
+      too_long_label = "a" * 64
+      SimpleIDN.to_ascii(too_long_label).should be_nil
+    end
+
+    it "accepts 62-character ASCII label (boundary test)" do
+      label = "a" * 62
+      SimpleIDN.to_ascii(label).should eq(label)
+    end
+
+    it "rejects unicode labels that produce punycode > 63 bytes" do
+      # Create a unicode string that will produce a punycode label > 63 chars
+      # "ä" repeated 26 times = "xn--" (4) + 26 "a"s + "-" + 26 base-36 chars = 57+ chars
+      # Need more characters to exceed 63 bytes in punycode form
+      # A label like "ääääääääääääääääääääääääääääääääääääääää" (40 ä's)
+      # becomes xn--aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-... which exceeds 63
+      long_unicode = "a" * 50 + "ä" * 10 # This should produce > 63 byte punycode
       result = SimpleIDN.to_ascii(long_unicode)
-      # The punycode would be 67 chars which exceeds the limit
-      # Implementation may return nil or the result depending on settings
+      # The punycode would exceed 63 bytes
+      result.should be_nil
+    end
+
+    it "accepts unicode labels that produce punycode <= 63 bytes" do
+      # A short unicode label that fits within 63 bytes
+      short_unicode = "münchen" # xn--mnchen-3ya = 14 bytes
+      result = SimpleIDN.to_ascii(short_unicode)
+      result.should eq("xn--mnchen-3ya")
+    end
+
+    it "allows exactly 63-byte punycode label" do
+      # Create a label that produces exactly 63 bytes in punycode
+      # "a" * 59 = 59 ASCII chars (valid)
+      label_59 = "a" * 59
+      SimpleIDN.to_ascii(label_59).should eq(label_59)
     end
   end
 
@@ -302,17 +332,30 @@ describe "IDNA2008 Conformance" do
       SimpleIDN.to_ascii("example.com.").should eq("example.com.")
     end
 
-    it "handles wildcard label" do
-      SimpleIDN.to_ascii("*.example.com").should eq("*.example.com")
+    it "handles wildcard label in non-strict mode" do
+      SimpleIDN.to_ascii("*.example.com", strict: false).should eq("*.example.com")
     end
 
-    it "handles underscore prefix (for SRV records)" do
-      SimpleIDN.to_ascii("_dmarc.example.com").should eq("_dmarc.example.com")
-      SimpleIDN.to_ascii("_tcp.example.com").should eq("_tcp.example.com")
+    it "rejects wildcard label in strict mode (default)" do
+      SimpleIDN.to_ascii("*.example.com").should be_nil
     end
 
-    it "handles @ symbol" do
-      SimpleIDN.to_ascii("@").should eq("@")
+    it "handles underscore prefix in non-strict mode (for SRV records)" do
+      SimpleIDN.to_ascii("_dmarc.example.com", strict: false).should eq("_dmarc.example.com")
+      SimpleIDN.to_ascii("_tcp.example.com", strict: false).should eq("_tcp.example.com")
+    end
+
+    it "rejects underscore prefix in strict mode (default)" do
+      SimpleIDN.to_ascii("_dmarc.example.com").should be_nil
+      SimpleIDN.to_ascii("_tcp.example.com").should be_nil
+    end
+
+    it "handles @ symbol in non-strict mode" do
+      SimpleIDN.to_ascii("@", strict: false).should eq("@")
+    end
+
+    it "rejects @ symbol in strict mode (default)" do
+      SimpleIDN.to_ascii("@").should be_nil
     end
   end
 
