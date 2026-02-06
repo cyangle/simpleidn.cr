@@ -108,6 +108,25 @@ SimpleIDN.to_ascii("-invalid.com")       # => nil (starts with hyphen)
 SimpleIDN.to_unicode("xn---")            # => nil (invalid punycode)
 ```
 
+## Performance & Lifecycle
+
+This library is optimized for high-performance applications:
+
+- **Global Instances**: ICU IDNA instances (`UIDNA`) are initialized once when the module is loaded and reused throughout the application's lifecycle.
+- **Thread Safety**: The reused `UIDNA` instances are immutable and thread-safe, making this library safe for concurrent use in multi-threaded Crystal applications.
+- **Fail-Fast Initialization**: If the ICU library cannot be initialized (e.g., system error), the application will raise `SimpleIDN::InitializationError` immediately upon startup, preventing runtime failures later.
+- **Automatic Cleanup**: An `at_exit` handler ensures that ICU resources are properly released when the application shuts down.
+
+> [!WARNING]
+> **Testing Caveat:** When writing specs, ensure that `require "simpleidn"` happens **before** `require "spec"`.
+> This is critical because `at_exit` handlers run in reverse order of registration. If `spec` is required first, the IDNA instances might be closed by the cleanup handler *before* the tests finish running, causing segmentation faults.
+>
+> **Correct `spec_helper.cr`:**
+> ```crystal
+> require "../src/simpleidn" # Must be first!
+> require "spec"
+> ```
+
 ## Features
 
 - **IDNA2008 Conformant**: Uses ICU's UTS #46 implementation with nontransitional processing by default
